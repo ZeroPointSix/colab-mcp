@@ -15,6 +15,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 import logging
+import sys
 import contextlib
 from contextlib import AsyncExitStack
 from fastmcp import FastMCP, Client
@@ -177,11 +178,10 @@ async def check_session_proxy_tool_fn(ctx: Context = CurrentContext()) -> bool:
     no_browser = ctx.get_state(NO_BROWSER_KEY)
 
     if no_browser:
-        logging.info(
-            "Open the following URL in your browser to connect to Colab:\n  %s",
-            colab_url,
+        print(
+            f"\nOpen this URL in your browser to connect to Colab:\n  {colab_url}\n",
+            file=sys.stderr,
         )
-        print(f"\nOpen this URL in your browser to connect to Colab:\n  {colab_url}\n")
     else:
         webbrowser.open_new(colab_url)
 
