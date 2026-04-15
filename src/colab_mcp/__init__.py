@@ -60,6 +60,34 @@ def parse_args(v):
         action="store_true",
         default=True,
     )
+    parser.add_argument(
+        "-n",
+        "--notebook",
+        help="URL or path of the Colab notebook to open (default: empty scratch notebook).",
+        action="store",
+        default=None,
+    )
+    parser.add_argument(
+        "-H",
+        "--host",
+        help="Host address for the WebSocket server to bind to (default: localhost).",
+        action="store",
+        default="localhost",
+    )
+    parser.add_argument(
+        "-P",
+        "--port",
+        help="Port for the WebSocket server to bind to (default: 0, random port).",
+        action="store",
+        default=0,
+        type=int,
+    )
+    parser.add_argument(
+        "--no-browser",
+        help="Do not auto-open a browser session. Instead, print the connection URL to the console.",
+        action="store_true",
+        default=False,
+    )
     return parser.parse_args(v)
 
 
@@ -69,7 +97,17 @@ async def main_async():
 
     if args.enable_proxy:
         logging.info("enabling session proxy tools")
-        session_mcp = ColabSessionProxy()
+        if args.host != "localhost":
+            logging.warning(
+                f"WebSocket server binding to {args.host}, which exposes it to the network. "
+                "Ensure your firewall is configured appropriately."
+            )
+        session_mcp = ColabSessionProxy(
+            notebook_url=args.notebook,
+            host=args.host,
+            port=args.port,
+            no_browser=args.no_browser,
+        )
         await session_mcp.start_proxy_server()
         mcp.mount(session_mcp.proxy_server)
         for middleware in session_mcp.middleware:

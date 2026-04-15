@@ -219,3 +219,56 @@ async def test_token_in_url():
 
         assert not server.connection_live.is_set()
         assert not server.connection_lock.locked()
+
+
+class TestGetColabUrl:
+    def test_default_url(self):
+        server = ColabWebSocketServer()
+        server.port = 5678
+        url = server.get_colab_url()
+        assert url.startswith("https://colab.research.google.com/notebooks/empty.ipynb#")
+        assert f"mcpProxyToken={server.token}" in url
+        assert "mcpProxyPort=5678" in url
+
+    def test_custom_notebook_url(self):
+        server = ColabWebSocketServer(notebook_url="https://colab.research.google.com/drive/abc123")
+        server.port = 5678
+        url = server.get_colab_url()
+        assert url.startswith("https://colab.research.google.com/drive/abc123#")
+        assert f"mcpProxyToken={server.token}" in url
+        assert "mcpProxyPort=5678" in url
+
+    def test_custom_notebook_strips_fragment(self):
+        server = ColabWebSocketServer(notebook_url="https://colab.research.google.com/drive/abc123#existing=param")
+        server.port = 5678
+        url = server.get_colab_url()
+        assert "#existing=param" not in url
+        assert url.startswith("https://colab.research.google.com/drive/abc123#mcpProxyToken=")
+
+    def test_path_only_notebook(self):
+        server = ColabWebSocketServer(notebook_url="/notebooks/my_notebook.ipynb")
+        server.port = 5678
+        url = server.get_colab_url()
+        assert url.startswith("https://colab.research.google.com/notebooks/my_notebook.ipynb#")
+        assert f"mcpProxyToken={server.token}" in url
+
+
+@pytest.mark.asyncio
+async def test_custom_port():
+    """Test that the server binds to a specific port when provided."""
+    import socket
+    sock = socket.socket()
+    sock.bind(("localhost", 0))
+    free_port = sock.getsockname()[1]
+    sock.close()
+
+    async with ColabWebSocketServer(port=free_port) as server:
+        assert server.port == free_port
+        client = await websockets.connect(
+            f"ws://localhost:{server.port}",
+            origin="https://colab.google.com",
+            subprotocols=["mcp"],
+            additional_headers={"Authorization": f"Bearer {server.token}"},
+        )
+        assert server.connection_live.is_set()
+        await client.close()

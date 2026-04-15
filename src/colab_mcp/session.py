@@ -14,6 +14,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+import logging
 import contextlib
 from contextlib import AsyncExitStack
 from fastmcp import FastMCP, Client
@@ -28,13 +29,15 @@ from mcp.client.session import ClientSession
 from mcp.types import TextContent
 import webbrowser
 
-from colab_mcp.websocket_server import ColabWebSocketServer, COLAB, SCRATCH_PATH
+from colab_mcp.websocket_server import ColabWebSocketServer, COLAB
 
 UI_CONNECTION_TIMEOUT = 60.0  # secs
 
 FE_CONNECTED_KEY = "fe_connected"
 PROXY_TOKEN_KEY = "proxy_token"
 PROXY_PORT_KEY = "proxy_port"
+COLAB_URL_KEY = "colab_url"
+NO_BROWSER_KEY = "no_browser"
 INJECTED_TOOL_NAME = "open_colab_browser_connection"
 
 
@@ -112,6 +115,12 @@ class ColabProxyMiddleware(Middleware):
         )
         context.fastmcp_context.set_state(PROXY_TOKEN_KEY, self.proxy_client.wss.token)
         context.fastmcp_context.set_state(PROXY_PORT_KEY, self.proxy_client.wss.port)
+        context.fastmcp_context.set_state(
+            COLAB_URL_KEY, self.proxy_client.wss.get_colab_url()
+        )
+        context.fastmcp_context.set_state(
+            NO_BROWSER_KEY, self.proxy_client.wss.no_browser
+        )
 
         result = await call_next(context)
 
@@ -161,13 +170,21 @@ class ColabProxyMiddleware(Middleware):
 
 async def check_session_proxy_tool_fn(ctx: Context = CurrentContext()) -> bool:
     fe_connected = ctx.get_state(FE_CONNECTED_KEY)
-    token = ctx.get_state(PROXY_TOKEN_KEY)
-    port = ctx.get_state(PROXY_PORT_KEY)
     if fe_connected:
         return True
-    webbrowser.open_new(
-        f"{COLAB}{SCRATCH_PATH}#mcpProxyToken={token}&mcpProxyPort={port}"
-    )
+
+    colab_url = ctx.get_state(COLAB_URL_KEY)
+    no_browser = ctx.get_state(NO_BROWSER_KEY)
+
+    if no_browser:
+        logging.info(
+            "Open the following URL in your browser to connect to Colab:\n  %s",
+            colab_url,
+        )
+        print(f"\nOpen this URL in your browser to connect to Colab:\n  {colab_url}\n")
+    else:
+        webbrowser.open_new(colab_url)
+
     return False
 
 
@@ -179,7 +196,17 @@ check_session_proxy_tool = Tool.from_function(
 
 
 class ColabSessionProxy:
-    def __init__(self):
+    def __init__(
+        self,
+        notebook_url: str | None = None,
+        host: str = "localhost",
+        port: int = 0,
+        no_browser: bool = False,
+    ):
+        self.notebook_url = notebook_url
+        self.host = host
+        self.port = port
+        self.no_browser = no_browser
         self._exit_stack = AsyncExitStack()
         self.proxy_server: FastMCPProxy | None = None
         # list order matters, see: https://gofastmcp.com/servers/middleware#multiple-middleware
@@ -187,7 +214,14 @@ class ColabSessionProxy:
         self.wss: ColabWebSocketServer | None = None
 
     async def start_proxy_server(self):
-        self.wss = await self._exit_stack.enter_async_context(ColabWebSocketServer())
+        self.wss = await self._exit_stack.enter_async_context(
+            ColabWebSocketServer(
+                host=self.host,
+                port=self.port,
+                notebook_url=self.notebook_url,
+            )
+        )
+        self.wss.no_browser = self.no_browser
         proxy_client = await self._exit_stack.enter_async_context(
             ColabProxyClient(self.wss)
         )

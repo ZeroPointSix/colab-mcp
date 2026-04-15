@@ -39,9 +39,10 @@ class ColabWebSocketServer:
     from a Google Colab session (colab.google.com).
     """
 
-    def __init__(self, host="localhost"):
+    def __init__(self, host="localhost", port=0, notebook_url: str | None = None):
         self.host = host
-        self.port = 0
+        self.port = port
+        self.notebook_url = notebook_url
         self.connection_lock = asyncio.Lock()
         self.connection_live = asyncio.Event()
         self.allowed_origins = [COLAB, COLAB_ALT_DOMAIN]
@@ -59,6 +60,19 @@ class ColabWebSocketServer:
             anyio.create_memory_object_stream(0)
         )
         self.token = secrets.token_urlsafe(16)
+
+    def get_colab_url(self) -> str:
+        """Construct the Colab URL to open, including MCP proxy connection parameters."""
+        if self.notebook_url:
+            base_url = self.notebook_url
+            if "#" in base_url:
+                base_url = base_url.split("#")[0]
+            if base_url.startswith("/"):
+                base_url = f"{COLAB}{base_url}"
+        else:
+            base_url = f"{COLAB}{SCRATCH_PATH}"
+
+        return f"{base_url}#mcpProxyToken={self.token}&mcpProxyPort={self.port}"
 
     async def _read_from_socket(self, websocket):
         """Listens to the socket and puts messages into the read stream."""
@@ -144,7 +158,7 @@ class ColabWebSocketServer:
         self._server = await websockets.serve(
             self._connection_handler,
             host=self.host,
-            port=0,
+            port=self.port,
             subprotocols=[Subprotocol("mcp")],
             origins=self.allowed_origins,
             process_request=self._validate_authorization,

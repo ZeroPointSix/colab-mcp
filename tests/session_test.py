@@ -41,6 +41,15 @@ class MockColabWebSocketServer:
         self.write_stream = AsyncMock()
         self.token = "test-token"
         self.port = 1234
+        self.notebook_url = None
+        self.external_url = None
+        self.no_browser = False
+
+    def get_colab_url(self):
+        base = "https://colab.research.google.com/notebooks/empty.ipynb"
+        if self.notebook_url:
+            base = self.notebook_url
+        return f"{base}#mcpProxyToken={self.token}&mcpProxyPort={self.port}"
 
     async def __aenter__(self):
         return self
@@ -74,6 +83,11 @@ class TestColabProxyMiddleware:
         context.fastmcp_context.set_state.assert_any_call("fe_connected", True)
         context.fastmcp_context.set_state.assert_any_call("proxy_token", "test-token")
         context.fastmcp_context.set_state.assert_any_call("proxy_port", 1234)
+        context.fastmcp_context.set_state.assert_any_call(
+            "colab_url",
+            "https://colab.research.google.com/notebooks/empty.ipynb#mcpProxyToken=test-token&mcpProxyPort=1234",
+        )
+        context.fastmcp_context.set_state.assert_any_call("no_browser", False)
         assert middleware.last_message_connected is True
         context.fastmcp_context.send_tool_list_changed.assert_called_once()
 
@@ -160,10 +174,10 @@ class TestCheckSessionProxyToolFn:
         def get_state(k):
             if k == session.FE_CONNECTED_KEY:
                 return False
-            if k == session.PROXY_TOKEN_KEY:
-                return "test-token"
-            if k == session.PROXY_PORT_KEY:
-                return 1234
+            if k == session.COLAB_URL_KEY:
+                return "https://colab.research.google.com/notebooks/empty.ipynb#mcpProxyToken=test-token&mcpProxyPort=1234"
+            if k == session.NO_BROWSER_KEY:
+                return False
             return None
 
         ctx.get_state.side_effect = get_state
@@ -172,6 +186,46 @@ class TestCheckSessionProxyToolFn:
         args, _ = mock_webbrowser.call_args
         assert "mcpProxyToken=test-token" in args[0]
         assert "mcpProxyPort=1234" in args[0]
+
+    @pytest.mark.asyncio
+    async def test_disconnected_no_browser(self, mock_webbrowser):
+        ctx = Mock()
+
+        def get_state(k):
+            if k == session.FE_CONNECTED_KEY:
+                return False
+            if k == session.COLAB_URL_KEY:
+                return "https://colab.research.google.com/drive/test123#mcpProxyToken=test-token&mcpProxyPort=1234"
+            if k == session.NO_BROWSER_KEY:
+                return True
+            return None
+
+        ctx.get_state.side_effect = get_state
+        with patch("builtins.print") as mock_print:
+            assert await session.check_session_proxy_tool_fn(ctx) is False
+        mock_webbrowser.assert_not_called()
+        mock_print.assert_called_once()
+        args, _ = mock_print.call_args
+        assert "https://colab.research.google.com/drive/test123" in args[0]
+
+    @pytest.mark.asyncio
+    async def test_disconnected_custom_notebook(self, mock_webbrowser):
+        ctx = Mock()
+
+        def get_state(k):
+            if k == session.FE_CONNECTED_KEY:
+                return False
+            if k == session.COLAB_URL_KEY:
+                return "https://colab.research.google.com/drive/abc123#mcpProxyToken=test-token&mcpProxyPort=1234"
+            if k == session.NO_BROWSER_KEY:
+                return False
+            return None
+
+        ctx.get_state.side_effect = get_state
+        assert await session.check_session_proxy_tool_fn(ctx) is False
+        mock_webbrowser.assert_called_once()
+        args, _ = mock_webbrowser.call_args
+        assert "/drive/abc123" in args[0]
 
 
 class TestColabProxyClient:
